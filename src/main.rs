@@ -110,14 +110,27 @@ impl Block {
         }
     }
 
-    pub fn transpile(self) -> String {
+    pub fn transpile(mut self) -> String {
         match self.block_type {
             LineType::Normal => {
+                self.content = self.content
+                    .into_iter()
+                    .map(|x| if x.trim() == "~~" {format!("\\quad\\newline")} else {x})
+                    .collect::<Vec<String>>();
                 format!("{}\n", fold_strings(self.content, "\n", "").trim())
             },
             LineType::Header(n) => {
                 match n {
                     1 => {
+                        format!("\\section{{ {} }}\n", fold_strings(self.content, " ", "").trim())
+                    },
+                    2 => {
+                        format!("\\subsection{{ {} }}\n", fold_strings(self.content, " ", "").trim())
+                    },
+                    3 => {
+                        format!("\\subsubsection{{ {} }}\n", fold_strings(self.content, " ", "").trim())
+                    },
+                    4 => {
                         let mut buffer = String::new();
                         buffer.push_str("\\end{flushleft}\n");
                         buffer.push_str("\\center\n");
@@ -129,7 +142,7 @@ impl Block {
                         buffer.push_str("\\begin{flushleft}\n");
                         buffer
                     },
-                    2 => {
+                    5 => {
                         format!("\\textbf{{ {} }}\\\\\n", fold_strings(self.content, " ", "").trim())
                     },
                     _ => {
@@ -138,10 +151,25 @@ impl Block {
                 }
             },
             LineType::Align => {
+                let commented = self.content.iter().any(|x| x.contains("~~"));
                 let mut buffer = String::new();
                 buffer.push_str("\\begin{align*}\n");
-                buffer.push_str(fold_strings(self.content, "\\\\\n", "&").trim());
-                buffer.push('\n');
+                for elem in self.content {
+                    if elem.contains("~~") {
+                        let (p1, p2) = elem.split_at(elem.find("~~").unwrap());
+                        buffer.push_str(&format!("&{}", p1.trim()));
+                        buffer.push_str(&format!(" &&\\text{{ {} }}", p2[2..].to_owned()));
+                    }
+                    else {
+                        if commented {
+                            buffer.push_str(&format!("&{} &&\\text{{\\quad}}", elem));
+                        }
+                        else {
+                            buffer.push_str(&format!("&{}", elem));
+                        }
+                    }
+                    buffer.push_str("\\\\\n");
+                }    
                 buffer.push_str("\\end{align*}\n");
                 buffer
             }
