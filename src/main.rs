@@ -1,17 +1,22 @@
 use std::fs::File;
 use std::io::Read;
+use std::io::Write;
 use std::io::Result as IOResult;
 use std::env;
 
-const DEFAULT_HEADER: &'static str = r#"
-\documentclass[12pt, a4paper]{article}
+const DEFAULT_HEADER: &'static str = r#"\documentclass[12pt, a4paper, twoside, titlepage]{article}
 \usepackage{amsmath}
 \usepackage{amsfonts}
 \usepackage{amssymb}
+\usepackage{a4}
+\usepackage[ngerman]{babel}
+\usepackage[utf8x]{inputenc}
+\usepackage{ragged2e}
 \begin{document}
+\begin{flushleft}
 "#;
 
-const DEFAULT_FOOTER: &'static str = r#"
+const DEFAULT_FOOTER: &'static str = r#"\end{flushleft}
 \end{document}
 "#;
 
@@ -26,7 +31,13 @@ fn main() {
             }
         };
         let document = PreFile::from_string(filecontent);
-        println!("{}", document.transpile());
+        let result = document.transpile();
+        match write_file(&format!("{}.tex", &filepath), result) {
+            Ok(_) => {},
+            Err(e) => {
+                println!("error while writing {}: {}", filepath, e);
+            }
+        }
     }
 }
 
@@ -35,6 +46,12 @@ fn read_file(path: String) -> IOResult<String> {
     let mut buffer = String::new();
     let _ = file.read_to_string(&mut buffer)?;
     Ok(buffer)
+}
+
+fn write_file(path: &String, content: String) -> IOResult<()> {
+    let mut file = File::create(path)?;
+    file.write_all(content.as_bytes())?;
+    Ok(())
 }
 
 pub enum Line {
@@ -94,8 +111,51 @@ impl Block {
     }
 
     pub fn transpile(self) -> String {
+        match self.block_type {
+            LineType::Normal => {
+                format!("{}\n", fold_strings(self.content, "\n", "").trim())
+            },
+            LineType::Header(n) => {
+                match n {
+                    1 => {
+                        let mut buffer = String::new();
+                        buffer.push_str("\\end{flushleft}\n");
+                        buffer.push_str("\\center\n");
+                        let cropped_content = fold_strings(self.content, " ", "").trim().to_owned();
+                        buffer.push_str("\\large");
+                        buffer.push_str(&format!("\\textbf{{ {} }}\n", cropped_content));
+                        buffer.push_str("\\normalsize\n");
+                        buffer.push_str("\\endcenter\n");
+                        buffer.push_str("\\begin{flushleft}\n");
+                        buffer
+                    },
+                    2 => {
+                        format!("\\textbf{{ {} }}\\\\\n", fold_strings(self.content, " ", "").trim())
+                    },
+                    _ => {
+                        panic!("header level exceeded 2");
+                    }
+                }
+            },
+            LineType::Align => {
+                let mut buffer = String::new();
+                buffer.push_str("\\begin{align*}\n");
+                buffer.push_str(fold_strings(self.content, "\\\\\n", "&").trim());
+                buffer.push('\n');
+                buffer.push_str("\\end{align*}\n");
+                buffer
+            }
+        }
+    }   
+}
 
-    }
+pub fn fold_strings(string: Vec<String>, suffix: &'static str, prefix: &'static str) -> String {
+    string.into_iter().fold(String::new(), (|mut acc, x| {
+        acc.push_str(prefix);
+        acc.push_str(&x);
+        acc.push_str(suffix); 
+        acc
+    }))
 }
 
 pub struct PreFile {
@@ -108,10 +168,20 @@ impl PreFile {
         for line_str in string.lines() {
             let line = line_str.to_owned();
             if line.starts_with(">") {
-                lines.push(Line::Align(line));
+                lines.push(Line::Align(line[1..].to_owned()));
             }
             else if line.starts_with("#") {
-                lines.push(Line::Header(line, 1));
+                let mut counter = 0;
+                for ch in line.chars() {
+                    if ch == '#' {
+                        counter += 1;
+                    }
+                    else {
+                        break;
+                    }
+                }
+                let cropped_line = line[counter..].to_owned();
+                lines.push(Line::Header(cropped_line, counter));
             }
             else { 
                 lines.push(Line::Normal(line));
@@ -135,6 +205,7 @@ impl PreFile {
                 block_buffer.push(line);
             }
         }
+        blocks.push(Block::from_block_buffer(block_buffer));
         PreFile {
             blocks: blocks
         }
@@ -142,11 +213,11 @@ impl PreFile {
 
     pub fn transpile(self) -> String {
         let mut buffer = String::new();
-        buffer.append(&mut DEFAULT_HEADER.to_owned());
+        buffer.push_str(DEFAULT_HEADER);
         for elem in self.blocks {
-            buffer.append(&mut elem.transpile());
+            buffer.push_str(&elem.transpile());
         }
-        buffer.append(&mut DEFAULT_FOOTER.to_owned());
+        buffer.push_str(&DEFAULT_FOOTER);
         buffer
     }
 }
